@@ -19,8 +19,10 @@ profiles = ["minimal", "default", "complete"]
 dist_root = "https://static.rust-lang.org/dist"
 one_day = datetime.timedelta(days=1)
 
-nightly = {target: {"latest": {}} for target in targets}
+readme_path = "README.md"
+cross_tag = "<!-- cross-targets -->"
 
+nightly = {target: {"latest": {}} for target in targets}
 
 def write_json(channel: str, content: Any) -> None:
     with open(f"data/{channel}.json", "w") as file:
@@ -98,20 +100,16 @@ def fetch_nightly(d: Optional[datetime.date] = None) -> None:
                     nightly[target][profile] = result
 
         for target, src in pkgs["rust-std"]["target"].items():
-            if target not in nightly:
-                if src["available"]:
-                    nightly[target] = {
-                        "latest": {
-                            "date": date_str,
-                            "components": {
-                                "rust-std": {
-                                    "date": date_str,
-                                    "url": src["url"],
-                                    "sha256": src["hash"],
-                                },
-                            },
-                        },
-                    }
+            if src["available"]:
+                if target not in nightly:
+                    nightly[target] = {"latest": {"date": date_str, "components": {}}}
+                if "components" not in nightly[target]["latest"]:
+                    nightly[target]["latest"]["components"] = {}
+                nightly[target]["latest"]["components"]["rust-std"] = {
+                    "date": date_str,
+                    "url": src["url"],
+                    "sha256": src["hash"],
+                }
 
         if skipped:
             fetch_nightly(date - one_day)
@@ -119,6 +117,29 @@ def fetch_nightly(d: Optional[datetime.date] = None) -> None:
 
 fetch_nightly()
 write_json("nightly", nightly)
+
+def update_readme():
+    # generate target list
+    rust_std_targets = set(
+        target for target, data in nightly.items()
+        if "latest" in data and "components" in data["latest"] and "rust-std" in data["latest"]["components"]
+    )
+    cross_targets = sorted(rust_std_targets - set(targets))
+
+    # edit the readme
+    with open(readme_path, "r") as f:
+        content = f.read()
+
+    parts = content.split(cross_tag)
+    before = parts[0] + cross_tag
+    after = cross_tag + parts[2]
+    middle = "\n" + "\n".join(f"  - `{t}`" for t in cross_targets) + "\n  "
+    new_content = before + middle + after
+
+    with open(readme_path, "w") as f:
+        f.write(new_content)
+
+update_readme()
 
 for channel in "stable", "beta":
     manifest = tomllib.load(urlopen(f"{dist_root}/channel-rust-{channel}.toml"))
